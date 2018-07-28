@@ -1,7 +1,6 @@
  # Pull Twitter Data and push into kinesis.
 
 from TwitterAPI import TwitterAPI
-from http.client import IncompleteRead
 from TwitterAPI import TwitterRequestError
 from TwitterAPI import TwitterConnectionError
 from botocore.exceptions import ClientError
@@ -55,7 +54,7 @@ while True:
                     # TODO: Need to ShardSplit and and then try again
                     # 
                     print("exception in put request")
-                    if PutError.respone['Error']['Code'] == 'ProvisionedThroughputExceededException':
+                    if PutError.response['Error']['Code'] == 'ProvisionedThroughputExceededException':
                         StrShardToSplit = PutResponse['ShardId']
                         if len(kinesis.list_shards(StreamName = TwitterKinesisStreamName)) >= maxStreamShards:
                             raise('UserStreamLimitReached')
@@ -73,7 +72,7 @@ while True:
                                             NewStartingHashKey = StartingHashKey
                                     )
                             raise
-                except awsConnectionError as awsConErr:
+                except awsConnectionError as awsConnErr:
                     print("AWS Connection Error", awsConnErr)    
                     raise
             else:
@@ -87,13 +86,9 @@ while True:
                     else:
                         # temporary failure, so re-try
                         break
-    except IncompleteRead:
-        #Ignore Incomplete Reads
-        print("IncompleteRead Handling")
-        pass
     except TwitterRequestError as e:
         if e.status_code < 500:
-            Print("TwitterRequestError ", e.status_code)
+            print("TwitterRequestError ", e.status_code)
             #Something bad has happened. Break out of the loop
             raise
     except TwitterConnectionError:
