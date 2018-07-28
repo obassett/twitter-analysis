@@ -4,8 +4,9 @@
 import boto3
 
 kinesis = boto3.client('kinesis')
+waiter = kinesis.get_waiter('stream_exists')
 
-TwitterStreamName = "twitter-stream2"
+TwitterStreamName = "twitter-stream"
 ShardCount = 1
 TwitterStreamExists = 0
 
@@ -26,6 +27,7 @@ if TwitterStreamExists > 0:
     print('A stream with that name already exists')
 else:
     kinesis.create_stream(StreamName=TwitterStreamName,ShardCount=ShardCount)
+    waiter.wait(StreamName = TwitterStreamName)
 
 StreamDescription = kinesis.describe_stream_summary(StreamName=TwitterStreamName)
 print(StreamDescription['StreamDescriptionSummary']['StreamName'], " - ", StreamDescription['StreamDescriptionSummary']['StreamStatus'])
