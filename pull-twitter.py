@@ -11,6 +11,7 @@ import json
 import boto3
 import twitterCreds
 
+
 ## twitter credentials
 
 consumer_key = twitterCreds.consumer_key
@@ -24,7 +25,7 @@ api = TwitterAPI(consumer_key, consumer_secret, access_token_key, access_token_s
 tweetsTotrack = "trump"
 
 # Define maximum number of shards for stream (cost control)
-maxStreamShards = 2
+maxStreamShards = 1
 maxItemsPerPut = 200
 
 # define name of Kinesis Stream to use
@@ -33,6 +34,42 @@ TwitterKinesisStreamName = "twitter-stream"
 
 kinesis = boto3.client('kinesis')
 waiter = kinesis.get_waiter('stream_exists')
+
+# -----------------------------------------------------------------------------
+# function to handle kinesis put-records reponse
+# Takes in the result of boto3.client('kinesis').put_records + StreamName + source data for request
+# If there is errors it creates a dictionary object with the failed records and return them
+# {ThroughputErrors:int, RecordsToRetry: [ { TweetData: 'json_str', PartitionKey: 'string'}}
+# -----------------------------------------------------------------------------
+def check_put_response(PutRecordsResult={},PutRecordsSource={}):
+    """TODO: Need to write what goes here! Description and Reference info etc.
+
+
+    """
+    ThroughputErrors = 0
+    RecordsToRetry = []
+    if PutRecordsResult['FailedRecordCount'] >= 1:
+        # Make sure Records I tried to write, and the response are the same length
+        if len(PutRecordsResult['Records']) == len(PutRecordsSource):
+            resultcounter = 0
+            # Loop through intial data records and add them into a retry list.
+            while resultcounter != len(PutRecordsResult['Records']):
+                if 'ErrorCode' in PutRecordsResult['Records'][resultcounter]:
+                    RecordsToRetry.append(PutRecordsSource[resultcounter])
+                    if PutRecordsResult['Records'][resultcounter]['ErrorCode'] == 'ProvisionedThroughputExceededException':
+                        ThroughputErrors += 1
+                resultcounter += 1
+            print("Failed Records=",PutRecordsResult['FailedRecordCount'], " - ThroughputErrors=", ThroughputErrors)
+        else:
+            print("ERROR: Length on PutRecordsReponse and PutRecordsSource don't match.")
+        return {'ThroughputErrors':ThroughputErrors, 'RecordsToRetry':RecordsToRetry}
+    else:
+        #No failed Records! Win!
+        return {'ThroughputErrors':ThroughputErrors, 'RecordsToRetry':RecordsToRetry}
+# -----------------------------------------------------------------------------
+
+
+
 
 while True:
     tweetRecords = []
@@ -44,24 +81,14 @@ while True:
                 try:
                     #put record into Kinesis stream. Use random partitionkey for even distribution (the tweet id should do )
                     PutResponse = kinesis.put_records(Records=tweetRecords,StreamName=TwitterKinesisStreamName)
-                    while PutResponse['FailedRecordCount'] >= 1:
-                        # Make sure Records I tried to write, and the response are the same length
-                        if len(PutResponse['Records']) == len(tweetRecords):
-                            resultcounter = 0
-                            provisionedthroughputerrorcount = 0
-                            RetryTweetRecords = []
-                            # Loop through intial data records and add them into a retry list.
-                            while resultcounter != len(PutResponse['Records']):
-                                if 'ErrorCode' in PutResponse['Records'][resultcounter]:
-                                    RetryTweetRecords.append(tweetRecords[resultcounter])
-                                    if PutResponse['Records'][resultcounter]['ErrorCode'] == 'ProvisionedThroughputExceededException':
-                                        provisionedthroughputerrorcount += 1
-                                resultcounter += 1
-                            print("Failed Records=",PutResponse['FailedRecordCount'], " - ProvisionedThroughputErrors=", provisionedthroughputerrorcount)
-                        # since we can only do minimal resharding, we should double shards
-                        # and then retry the tweets we just did
+                    if PutResponse['FailedRecordCount'] >= 1:
+                        #Call my check_result function to get the failed records, and see if there are throughput errors in the failures
+                        check_result = check_put_response(PutRecordsResult=PutResponse,PutRecordsSource=tweetRecords)
                         # TODO: Really need to start breaking this code up into modules
-                        if provisionedthroughputerrorcount >=1:
+                        while check_result['ThroughputErrors'] >=1:
+                            # Since there are throughput errors I need to increase shards
+                            # since we can only do minimal resharding, we should double shards
+                            # and then retry the tweets we just did
                             #Need to get existing shard count
                             currentShardCount = kinesis.describe_stream_summary(StreamName=TwitterKinesisStreamName)['StreamDescriptionSummary']['OpenShardCount']
                             #Then double it and resize
@@ -74,8 +101,11 @@ while True:
                                 print('Target Shard Count is: ',shardupdate['TargetShardCount'])
                                 #Then wait till active again
                                 waiter.wait(StreamName=TwitterKinesisStreamName)
-                                #Then retry back into PutResponse to that we can reset it's value and stop looping if we need to.
-                            PutResponse = kinesis.put_records(Records=RetryTweetRecords,StreamName=TwitterKinesisStreamName)
+                            #Then retry back into PutResponse to that we can reset it's value and stop looping if we need to.
+                            RetryResponse = kinesis.put_records(Records=check_result['RecordsToRetry'],StreamName=TwitterKinesisStreamName)
+                            check_result = check_put_response(PutRecordsResult=RetryResponse,PutRecordsSource=check_result['RecordsToRetry'])
+
+                            
                     
                     itemcount = 0
                     tweetRecords = []
