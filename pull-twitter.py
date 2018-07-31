@@ -104,9 +104,6 @@ while True:
                             #Then retry back into PutResponse to that we can reset it's value and stop looping if we need to.
                             RetryResponse = kinesis.put_records(Records=check_result['RecordsToRetry'],StreamName=TwitterKinesisStreamName)
                             check_result = check_put_response(PutRecordsResult=RetryResponse,PutRecordsSource=check_result['RecordsToRetry'])
-
-                            
-                    
                     itemcount = 0
                     tweetRecords = []
                 except ClientError as PutError:
