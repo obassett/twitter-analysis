@@ -1,2 +1,4 @@
 # Don't upload my credentials
 twitterCreds.py
+output.json
+output.raw
