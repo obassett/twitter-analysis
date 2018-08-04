@@ -10,33 +10,40 @@ from botocore.exceptions import ConnectionError as awsConnectionError
 # function to write to dynamodb
 
 # -----------------------------------------------------------------------------
-def write_to_dynamo(DynamoRecord):
+def write_to_dynamo(tweet_id_str,tweet_sentiment,**kwargs):
     """TODO: Need to write what goes here! Description and Reference info etc.
 
 
     """
-    # Pass in collection with records(dict)
-    # Check we have everything
-    # Write records.
+    import boto3
+    dynamodb = boto3.resource('dynamodb')
+    table = dynamodb.Table('tweets')
+    #--------------------------------------------------------------------------
+    # DynamoRecord = {
+    #             'tweet_id_str':ProcessedTweet['id_str'],
+    #             'tweet_sentiment':SentimentInfo['Sentiment'],
+    #             'sentiment_pos_pct':SentimentInfo['SentimentScore']['Positive'],
+    #             'sentiment_neg_pct':SentimentInfo['SentimentScore']['Negative'],
+    #             'sentiment_neu_pct':SentimentInfo['SentimentScore']['Neutral'],
+    #             'sentiment_mix_pct':SentimentInfo['SentimentScore']['Mixed'],
+    #             'tweet_user_id_str':ProcessedTweet['user_id_str'],
+    #             'tweet_user_name':ProcessedTweet['user_name'],
+    #             'tweet_text':ProcessedTweet['text'],
+    #             'tweet_hashtags':ProcessedTweet['hashtags'],
+    #             'tweet_json':ProcessedTweet['tweet_json']
+    #             }
+    #--------------------------------------------------------------------------
 
-    # tweet records we want to write:
-    # tweet_id_str
-    # user id_str
-    # user screen_name
-    # text
-    # hashtags
-    # Some kinda geo data
-    # Full JSON of tweet
+    RecordtoWrite = {'tweet_id_str':tweet_id_str,'tweet_sentiment':tweet_sentiment}
+    RecordtoWrite.update(kwargs)
 
-    # Comprehend details we want to write
-    # Sentiment
-    # Postive %
-    # Negative %
-    # Neutral %
-    # Unsure %
 
-    Results =""
-    return Results
+    table.put_item(
+        Item=RecordtoWrite
+    )
+
+    
+    return 
 # -----------------------------------------------------------------------------
 
 
@@ -51,13 +58,12 @@ def get_tweet_details(tweet):
         # user id_str
         # user screen_name
         # hashtags
-        # tweet location (geo co-ords)
         # Full JSON object
+    ReturnedValue = {}
+    ht_list = []
     dictTweet = json.loads(tweet)
-
     # Ignore retweets for sentiment analyis but keep quotes and only do analysis on new text
     if 'retweeted_status' not in dictTweet:
-        # pull all the values except text
         if dictTweet['is_quote_status']:
             #Handle Quotes
             TweetText = dictTweet['text']
@@ -67,7 +73,17 @@ def get_tweet_details(tweet):
         else:
             # Get the normal text
             TweetText = dictTweet['text']
-        ReturnedValue = {'text':TweetText,'tweet_json':tweet}
+        for hashtag in dictTweet['entities']['hashtags']:
+            ht_list.append(hashtag['text'])
+        ReturnedValue = {
+            'id_str':dictTweet['id_str'],
+            'user_id_str':dictTweet['user']['id_str'],
+            'user_name':dictTweet['user']['screen_name'],
+            'text':TweetText,
+            'hashtags':ht_list,
+            'RT':False,
+            'tweet_json':tweet
+            }
     else:
         #Set RT value to true for retweets and don't return anything else except for raw json.
         ReturnedValue = {'tweet_json':tweet,'RT':True}
@@ -78,16 +94,26 @@ def get_sentiment(text):
     """Stuff
 
     """
+    comprehend = boto3.client("comprehend")
     #Pass is tweet text and return below
     # Grab following:
         # Sentiment
         # Postive %
         # Negative %
         # Neutral %
-        # Unsure %
-    
+        # Mixed %
+        # {
+        #   'Sentiment': 'POSITIVE'|'NEGATIVE'|'NEUTRAL'|'MIXED',
+        #   'SentimentScore': {
+        #      'Positive': ...,
+        #      'Negative': ...,
+        #      'Neutral': ...,
+        #      'Mixed': ...
+        #   }
+        # }
     ReturnedSentiment = {}
-    
+    ReturnedSentiment = comprehend.detect_sentiment(Text=text,LanguageCode='en')
+
     return ReturnedSentiment
 
 def lambda_handler(event, context):
@@ -100,9 +126,18 @@ def lambda_handler(event, context):
             SentimentInfo = get_sentiment(ProcessedTweet['text'])
             DynamoRecord = {
                 'tweet_id_str':ProcessedTweet['id_str'],
-                'tweet_sentiment':SentimentInfo['Sentiment']
+                'tweet_sentiment':SentimentInfo['Sentiment'],
+                'sentiment_pos_pct':str(SentimentInfo['SentimentScore']['Positive']),
+                'sentiment_neg_pct':str(SentimentInfo['SentimentScore']['Negative']),
+                'sentiment_neu_pct':str(SentimentInfo['SentimentScore']['Neutral']),
+                'sentiment_mix_pct':str(SentimentInfo['SentimentScore']['Mixed']),
+                'tweet_user_id_str':ProcessedTweet['user_id_str'],
+                'tweet_user_name':ProcessedTweet['user_name'],
+                'tweet_text':ProcessedTweet['text'],
+                'tweet_hashtags':ProcessedTweet['hashtags'],
+                'tweet_json':ProcessedTweet['tweet_json']
                 }
-            write_to_dynamo(DynamoRecord)
+            write_to_dynamo(**DynamoRecord)
 
     return 'Successfully processed {} records.'.format(len(event['Records']))
 
